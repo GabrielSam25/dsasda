@@ -1,5 +1,4 @@
-import chromium from "@sparticuz/chromium-min";
-import { chromium as playwright } from "playwright-core";
+import { chromium } from "playwright-core";
 
 export default async function handler(req, res) {
   try {
@@ -8,20 +7,21 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Falta o parâmetro ?url=" });
     }
 
-    // Caminho do Chromium compatível com serverless
-    const executablePath = await chromium.executablePath();
-
-    // Lançando o navegador headless
-    const browser = await playwright.launch({
-      args: chromium.args,
-      executablePath,
-      headless: chromium.headless,
+    // Chromium compatível com Vercel (headless)
+    const browser = await chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+      ],
     });
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle" });
 
-    // Pegando o HTML renderizado
     const content = await page.content();
 
     await browser.close();
