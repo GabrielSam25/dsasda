@@ -1,17 +1,11 @@
 {
-  "name": "playwright-vercel-api",
+  "name": "scraper-api",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
-    "playwright-core": "^1.48.0",
-    "@sparticuz/chromium-min": "^119.0.0"
-  },
-  "description": "",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+    "playwright-core": "^1.48.0"
+  }
 }
