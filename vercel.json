@@ -2,7 +2,6 @@
   "version": 2,
   "functions": {
     "scrape.js": {
-      "runtime": "@vercel/node",
       "memory": 1024,
       "maxDuration": 30
     }
