@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "scrape.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/scrape",
+      "dest": "/scrape.js"
+    }
+  ],
+  "functions": {
+    "scrape.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  }
+}
