@@ -179,7 +179,7 @@ function createTrackingEmbed(trackingInfo, isUpdate = false) {
     return embed;
 }
 
-// Função para enviar mensagem DM para um usuário
+// Função para enviar mensagem DM para m usuário
 async function sendDM(userId, message, embed = null) {
     try {
         const user = await discordClient.users.fetch(userId);
@@ -268,16 +268,31 @@ const commands = [
 // Registrar comandos slash
 const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
 
+// Registrar comandos slash
 async function registerCommands() {
     try {
         console.log('🔧 Registrando comandos slash...');
+        
+        const commandsData = commands.map(command => command.toJSON());
+        
+        // Registrar comandos globalmente (leva até 1 hora para propagar)
         await rest.put(
             Routes.applicationCommands(CLIENT_ID),
-            { body: commands }
+            { body: commandsData }
         );
+        
         console.log('✅ Comandos slash registrados com sucesso!');
+        console.log('⏰ Os comandos podem levar até 1 hora para aparecerem em todos os servidores');
+        
     } catch (error) {
         console.error('❌ Erro ao registrar comandos:', error);
+        
+        // Log mais detalhado do erro
+        if (error.code === 50001) {
+            console.error('💡 Erro 50001: Missing Access - Verifique se o bot tem permissão para criar comandos');
+        } else if (error.code === 50013) {
+            console.error('💡 Erro 50013: Missing Permissions - Verifique as permissões do bot');
+        }
     }
 }
 
