@@ -1,10 +1,8 @@
-// bot.js - Linhas iniciais
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const cheerio = require('cheerio');
 const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -34,9 +32,8 @@ if (!DISCORD_BOT_TOKEN) {
     process.exit(1);
 }
 
-
 // URL da sua API no Vercel
-const API_BASE_URL = 'https://recebasddsa.vercel.app/api/shopee-tracker';
+const API_BASE_URL = process.env.API_BASE_URL || 'https://recebasddsa.vercel.app/api/shopee-tracker';
 
 // Carregar dados salvos
 const DATA_FILE = path.join(__dirname, 'tracking_data.json');
@@ -65,13 +62,11 @@ function saveData() {
 function formatDateTime(dateTimeStr) {
     if (!dateTimeStr) return 'Data não disponível';
     
-    // Tenta parsear diferentes formatos de data
     const date = new Date(dateTimeStr);
     if (!isNaN(date.getTime())) {
         return date.toLocaleString('pt-BR');
     }
     
-    // Se for no formato do site (ex: "13 Sep 2025\n17:41:16")
     if (dateTimeStr.includes('\n')) {
         const [datePart, timePart] = dateTimeStr.split('\n');
         return `${datePart} ${timePart}`;
@@ -80,10 +75,15 @@ function formatDateTime(dateTimeStr) {
     return dateTimeStr;
 }
 
-// Função para obter informações de rastreamento da SUA API
+// Função para verificar se pedido já foi entregue
+function isDelivered(status) {
+    const statusLower = status.toLowerCase();
+    return statusLower.includes('entregue') || statusLower.includes('delivered');
+}
+
+// Função para obter informações de rastreamento da API
 async function getTrackingInfo(trackingCode) {
     try {
-        // Usar sua API do Vercel em vez do web scraping direto
         const apiUrl = `${API_BASE_URL}/${trackingCode}`;
         console.log(`📡 Chamando API: ${apiUrl}`);
         
@@ -107,12 +107,12 @@ async function getTrackingInfo(trackingCode) {
             timestamp: event.timestamp || new Date(`${event.date} ${event.time}`).getTime()
         }));
 
-        // Determinar status atual e emoji correspondente (baseado na API)
+        // Determinar status atual e emoji correspondente
         let status = apiData.tracking.status || 'Em processamento';
         let statusEmoji = '⏳';
         
         const statusLower = status.toLowerCase();
-        if (statusLower.includes('entregue') || statusLower.includes('delivered')) {
+        if (isDelivered(status)) {
             statusEmoji = '✅';
         } else if (statusLower.includes('saiu para entrega') || statusLower.includes('out for delivery')) {
             statusEmoji = '🚚';
@@ -124,7 +124,7 @@ async function getTrackingInfo(trackingCode) {
 
         // Calcular progresso baseado no status
         let progress = 0;
-        if (statusLower.includes('entregue')) progress = 100;
+        if (isDelivered(status)) progress = 100;
         else if (statusLower.includes('saiu para entrega')) progress = 80;
         else if (statusLower.includes('trânsito')) progress = 60;
         else if (statusLower.includes('postado')) progress = 40;
@@ -139,12 +139,12 @@ async function getTrackingInfo(trackingCode) {
             events,
             lastUpdated: new Date().toISOString(),
             estimatedDelivery: calculateEstimatedDelivery(events),
-            rawData: apiData // Manter dados brutos para debug
+            isDelivered: isDelivered(status),
+            rawData: apiData
         };
     } catch (error) {
         console.error('Erro ao buscar informações da API:', error);
         
-        // Fallback: tentar web scraping direto se a API falhar
         if (error.response?.status === 404) {
             throw new Error('API de rastreamento não encontrada. Verifique a URL.');
         }
@@ -153,85 +153,13 @@ async function getTrackingInfo(trackingCode) {
     }
 }
 
-// Função para fallback (web scraping direto)
-async function getTrackingInfoFallback(trackingCode) {
-    try {
-        console.log('🔄 Tentando fallback para web scraping direto...');
-        const url = `https://spx.com.br/track?${trackingCode}`;
-        const response = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-        
-        const html = response.data;
-        const $ = cheerio.load(html);
-        
-        const events = [];
-        $('.nss-comp-tracking-item').each((index, element) => {
-            const time = $(element).find('.time').text().trim();
-            const message = $(element).find('.message').text().trim();
-            events.push({ 
-                time: formatDateTime(time), 
-                message,
-                timestamp: new Date().getTime()
-            });
-        });
-        
-        // Determinar status atual e emoji correspondente
-        let status = 'Em processamento';
-        let statusEmoji = '⏳';
-        const lastUpdate = events[0]?.message.toLowerCase() || '';
-        
-        if (lastUpdate.includes('entregue') || lastUpdate.includes('delivered')) {
-            status = 'Entregue';
-            statusEmoji = '✅';
-        } else if (lastUpdate.includes('saiu para entrega') || lastUpdate.includes('out for delivery')) {
-            status = 'Saiu para entrega';
-            statusEmoji = '🚚';
-        } else if (lastUpdate.includes('trânsito') || lastUpdate.includes('transit')) {
-            status = 'Em trânsito';
-            statusEmoji = '📦';
-        } else if (lastUpdate.includes('postado') || lastUpdate.includes('posted')) {
-            status = 'Postado';
-            statusEmoji = '📮';
-        } else if (lastUpdate.includes('processamento') || lastUpdate.includes('processing')) {
-            status = 'Em processamento';
-            statusEmoji = '⚙️';
-        }
-        
-        // Calcular progresso (0 a 100)
-        let progress = 0;
-        if (status === 'Entregue') progress = 100;
-        else if (status === 'Saiu para entrega') progress = 80;
-        else if (status === 'Em trânsito') progress = 60;
-        else if (status === 'Postado') progress = 40;
-        else if (status === 'Em processamento') progress = 20;
-        
-        return {
-            success: true,
-            trackingCode,
-            status: `${statusEmoji} ${status}`,
-            statusEmoji,
-            progress,
-            events,
-            lastUpdated: new Date().toISOString(),
-            estimatedDelivery: calculateEstimatedDelivery(events)
-        };
-    } catch (fallbackError) {
-        console.error('Erro no fallback também:', fallbackError);
-        throw new Error('Não foi possível obter informações de rastreamento');
-    }
-}
-
-// Função para calcular entrega estimada (simplificado)
+// Função para calcular entrega estimada
 function calculateEstimatedDelivery(events) {
     if (!events || events.length === 0) return null;
     
-    const firstEvent = events[events.length - 1]; // Evento mais antigo
+    const firstEvent = events[events.length - 1];
     const firstDate = new Date(firstEvent.timestamp || new Date());
     
-    // Adiciona 7-15 dias úteis para entrega estimada
     const estimatedDate = new Date(firstDate);
     estimatedDate.setDate(estimatedDate.getDate() + 10);
     
@@ -250,7 +178,6 @@ function createTrackingEmbed(trackingInfo, isUpdate = false) {
             { name: '🕒 Última Atualização', value: formatDateTime(trackingInfo.lastUpdated), inline: true }
         );
     
-    // Adicionar previsão de entrega se disponível
     if (trackingInfo.estimatedDelivery) {
         embed.addFields({
             name: '📅 Previsão de Entrega',
@@ -259,7 +186,6 @@ function createTrackingEmbed(trackingInfo, isUpdate = false) {
         });
     }
     
-    // Adicionar últimos eventos (máximo 3)
     if (trackingInfo.events && trackingInfo.events.length > 0) {
         const recentEvents = trackingInfo.events.slice(0, 3);
         embed.addFields({
@@ -267,6 +193,14 @@ function createTrackingEmbed(trackingInfo, isUpdate = false) {
             value: recentEvents.map(event => 
                 `• ${event.time}: ${event.message}`
             ).join('\n')
+        });
+    }
+    
+    if (trackingInfo.isDelivered) {
+        embed.addFields({
+            name: '🎉 Pedido Entregue',
+            value: 'Este pedido já foi entregue! Não é necessário acompanhamento adicional.',
+            inline: false
         });
     }
     
@@ -297,15 +231,19 @@ async function checkForUpdates() {
     console.log('🔍 Verificando atualizações via API...');
     
     for (const [trackingCode, data] of Object.entries(trackingData)) {
+        // Pular pedidos já entregues
+        if (data.isDelivered) {
+            console.log(`📦 Pedido ${trackingCode} já entregue, pulando verificação`);
+            continue;
+        }
+        
         try {
             const currentInfo = await getTrackingInfo(trackingCode);
-            const currentStatus = currentInfo.status;
             
             // Verificar se houve mudança de status
-            if (data.lastStatus !== currentStatus) {
-                console.log(`🔄 Status alterado para ${trackingCode}: ${data.lastStatus} -> ${currentStatus}`);
+            if (data.lastStatus !== currentInfo.status) {
+                console.log(`🔄 Status alterado para ${trackingCode}: ${data.lastStatus} -> ${currentInfo.status}`);
                 
-                // Criar embed para a atualização
                 const updateEmbed = createTrackingEmbed(currentInfo, true);
                 
                 // Notificar todos os usuários registrados
@@ -315,35 +253,18 @@ async function checkForUpdates() {
                 }
                 
                 // Atualizar dados
-                trackingData[trackingCode].lastStatus = currentStatus;
+                trackingData[trackingCode].lastStatus = currentInfo.status;
                 trackingData[trackingCode].history = currentInfo.events;
+                trackingData[trackingCode].isDelivered = currentInfo.isDelivered;
                 saveData();
+                
+                // Se foi entregue, remover das verificações futuras
+                if (currentInfo.isDelivered) {
+                    console.log(`🎉 Pedido ${trackingCode} marcado como entregue, removendo das verificações`);
+                }
             }
         } catch (error) {
             console.error(`❌ Erro ao verificar ${trackingCode} via API:`, error);
-            
-            // Tentar fallback para códigos importantes
-            if (data.users.length > 0) {
-                try {
-                    const currentInfo = await getTrackingInfoFallback(trackingCode);
-                    if (data.lastStatus !== currentInfo.status) {
-                        console.log(`🔄 Status alterado (fallback) para ${trackingCode}: ${data.lastStatus} -> ${currentInfo.status}`);
-                        
-                        const updateEmbed = createTrackingEmbed(currentInfo, true);
-                        
-                        for (const userId of data.users) {
-                            const message = `📦 **ATUALIZAÇÃO DE ENCOMENDA**\nSeu pedido ${trackingCode} teve uma atualização!`;
-                            await sendDM(userId, message, updateEmbed);
-                        }
-                        
-                        trackingData[trackingCode].lastStatus = currentInfo.status;
-                        trackingData[trackingCode].history = currentInfo.events;
-                        saveData();
-                    }
-                } catch (fallbackError) {
-                    console.error(`❌ Fallback também falhou para ${trackingCode}`);
-                }
-            }
         }
     }
 }
@@ -352,7 +273,7 @@ async function checkForUpdates() {
 discordClient.once(Events.ClientReady, (readyClient) => {
     console.log(`🤖 Bot Discord logado como ${readyClient.user.tag}!`);
     
-    // Iniciar servidor HTTP APÓS o bot do Discord estar pronto
+    // Iniciar servidor HTTP
     app.listen(PORT, () => {
         console.log(`🌐 Servidor rodando na porta ${PORT}`);
     });
@@ -366,7 +287,6 @@ discordClient.once(Events.ClientReady, (readyClient) => {
 
 // Event listener for message events
 discordClient.on(Events.MessageCreate, async (message) => {
-    // Ignorar mensagens de bots e que não começam com o prefixo
     if (message.author.bot || !message.content.startsWith('!rastrear')) return;
 
     try {
@@ -383,18 +303,33 @@ discordClient.on(Events.MessageCreate, async (message) => {
             return message.reply('❌ Código de rastreamento inválido. Formatos aceitos: BR123456789BR, LX123456789US, etc.');
         }
 
-        // Mostrar que está processando
+        // Verificar se já está registrado e é o mesmo usuário
+        if (trackingData[trackingCode] && trackingData[trackingCode].users.includes(userId)) {
+            return message.reply('❌ Você já está registrado para receber atualizações deste código de rastreamento.');
+        }
+
         const processingMsg = await message.reply('🔍 Buscando informações de rastreamento...');
 
         try {
             const trackingInfo = await getTrackingInfo(trackingCode);
             
+            // Verificar se já foi entregue
+            if (trackingInfo.isDelivered) {
+                const embed = createTrackingEmbed(trackingInfo);
+                await processingMsg.edit({ 
+                    content: `✅ Pedido **${trackingCode}** já foi entregue!`, 
+                    embeds: [embed] 
+                });
+                return;
+            }
+
             // Registrar/atualizar dados
             if (!trackingData[trackingCode]) {
                 trackingData[trackingCode] = {
                     users: [],
                     lastStatus: trackingInfo.status,
                     history: trackingInfo.events,
+                    isDelivered: trackingInfo.isDelivered,
                     createdAt: new Date().toISOString()
                 };
             }
@@ -405,45 +340,16 @@ discordClient.on(Events.MessageCreate, async (message) => {
                 saveData();
             }
 
-            // Atualizar embed
             const embed = createTrackingEmbed(trackingInfo);
             
-            // Editar mensagem original com os resultados
             await processingMsg.edit({ 
-                content: `✅ Rastreamento para **${trackingCode}** - ${trackingInfo.status}`, 
+                content: `✅ Registrado para **${trackingCode}** - ${trackingInfo.status}\nVocê receberá atualizações automáticas!`, 
                 embeds: [embed] 
             });
 
-        } catch (apiError) {
-            console.error('Erro na API, tentando fallback:', apiError);
-            
-            try {
-                const trackingInfo = await getTrackingInfoFallback(trackingCode);
-                
-                // Registrar/atualizar dados
-                if (!trackingData[trackingCode]) {
-                    trackingData[trackingCode] = {
-                        users: [],
-                        lastStatus: trackingInfo.status,
-                        history: trackingInfo.events,
-                        createdAt: new Date().toISOString()
-                    };
-                }
-
-                if (!trackingData[trackingCode].users.includes(userId)) {
-                    trackingData[trackingCode].users.push(userId);
-                    saveData();
-                }
-
-                const embed = createTrackingEmbed(trackingInfo);
-                
-                await processingMsg.edit({ 
-                    content: `⚠️ Usando método alternativo para **${trackingCode}** - ${trackingInfo.status}`, 
-                    embeds: [embed] 
-                });
-            } catch (fallbackError) {
-                await processingMsg.edit('❌ Não foi possível obter informações de rastreamento. Tente novamente mais tarde.');
-            }
+        } catch (error) {
+            console.error('Erro na API:', error);
+            await processingMsg.edit('❌ Não foi possível obter informações de rastreamento. Verifique o código e tente novamente.');
         }
 
     } catch (error) {
@@ -458,23 +364,30 @@ function isValidTrackingCode(code) {
 }
 
 // Rotas da API
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        message: 'API de rastreamento SPX está funcionando',
+        timestamp: new Date().toISOString()
+    });
+});
+
 app.get('/track/:code', async (req, res) => {
     try {
         const trackingCode = req.params.code;
         const trackingInfo = await getTrackingInfo(trackingCode);
         
-        // Formatar resposta para melhor visualização
         const formattedResponse = {
             success: trackingInfo.success,
             trackingCode: trackingInfo.trackingCode,
             status: trackingInfo.status,
             progress: `${trackingInfo.progress}%`,
+            isDelivered: trackingInfo.isDelivered,
             events: trackingInfo.events.map(event => ({
                 time: event.time,
                 message: event.message
             })),
-            lastUpdated: formatDateTime(trackingInfo.lastUpdated),
-            estimatedDelivery: trackingInfo.estimatedDelivery ? formatDateTime(trackingInfo.estimatedDelivery) : null
+            lastUpdated: formatDateTime(trackingInfo.lastUpdated)
         };
         
         res.json(formattedResponse);
@@ -488,106 +401,12 @@ app.get('/track/:code', async (req, res) => {
     }
 });
 
-app.post('/track', async (req, res) => {
-    try {
-        const { trackingCode, discordId } = req.body;
-        
-        if (!trackingCode || !discordId) {
-            return res.status(400).json({
-                success: false,
-                message: 'Código de rastreamento e ID do Discord são obrigatórios'
-            });
-        }
-        
-        if (!isValidTrackingCode(trackingCode)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Código de rastreamento inválido'
-            });
-        }
-        
-        // Registrar usuário para receber notificações
-        if (!trackingData[trackingCode]) {
-            trackingData[trackingCode] = {
-                users: [],
-                lastStatus: '',
-                history: [],
-                createdAt: new Date().toISOString()
-            };
-        }
-        
-        if (!trackingData[trackingCode].users.includes(discordId)) {
-            trackingData[trackingCode].users.push(discordId);
-            saveData();
-        }
-        
-        // Buscar informações atuais
-        const trackingInfo = await getTrackingInfo(trackingCode);
-        trackingData[trackingCode].lastStatus = trackingInfo.status;
-        trackingData[trackingCode].history = trackingInfo.events;
-        saveData();
-        
-        res.json({
-            success: true,
-            message: 'Registrado para receber atualizações',
-            trackingInfo: {
-                trackingCode: trackingInfo.trackingCode,
-                status: trackingInfo.status,
-                progress: `${trackingInfo.progress}%`,
-                lastUpdated: formatDateTime(trackingInfo.lastUpdated)
-            }
-        });
-    } catch (error) {
-        console.error('Erro na rota /track POST:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao processar solicitação',
-            error: error.message
-        });
-    }
-});
-
 app.get('/users', (req, res) => {
     res.json({
         success: true,
+        totalTrackings: Object.keys(trackingData).length,
         data: trackingData
     });
-});
-
-app.delete('/track/:code', (req, res) => {
-    try {
-        const trackingCode = req.params.code;
-        const { discordId } = req.body;
-        
-        if (!discordId) {
-            return res.status(400).json({
-                success: false,
-                message: 'ID do Discord é obrigatório'
-            });
-        }
-        
-        if (trackingData[trackingCode]) {
-            trackingData[trackingCode].users = trackingData[trackingCode].users.filter(id => id !== discordId);
-            
-            // Remover código se não houver mais usuários
-            if (trackingData[trackingCode].users.length === 0) {
-                delete trackingData[trackingCode];
-            }
-            
-            saveData();
-        }
-        
-        res.json({
-            success: true,
-            message: 'Parou de receber notificações para este código'
-        });
-    } catch (error) {
-        console.error('Erro na rota DELETE /track:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Erro ao processar solicitação'
-        });
-    }
 });
 
 // Log in to Discord with your bot's token
@@ -604,11 +423,11 @@ discordClient.login(DISCORD_BOT_TOKEN)
 // Manipular encerramento graceful
 process.on('SIGINT', () => {
     console.log('🛑 Encerrando servidor...');
+    saveData();
     if (discordClient.isReady()) {
         discordClient.destroy();
     }
     process.exit(0);
 });
 
-// Exportar para testes
 module.exports = { app, discordClient, getTrackingInfo, trackingData, saveData };
