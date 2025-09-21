@@ -238,7 +238,7 @@ async function checkForUpdates() {
     }
 }
 
-// Definir comandos slash
+// Definir comandos slash com permissão para DMs
 const commands = [
     new SlashCommandBuilder()
         .setName('rastrear')
@@ -246,11 +246,13 @@ const commands = [
         .addStringOption(option =>
             option.setName('codigo')
                 .setDescription('Código de rastreamento (ex: BR123456789BR)')
-                .setRequired(true)),
+                .setRequired(true))
+        .setDMPermission(true), // Habilitar em DMs
     
     new SlashCommandBuilder()
         .setName('meusrastreamentos')
-        .setDescription('Lista todos os pedidos que você está rastreando'),
+        .setDescription('Lista todos os pedidos que você está rastreando')
+        .setDMPermission(true), // Habilitar em DMs
     
     new SlashCommandBuilder()
         .setName('removerrastreamento')
@@ -258,17 +260,19 @@ const commands = [
         .addStringOption(option =>
             option.setName('codigo')
                 .setDescription('Código de rastreamento que deseja remover')
-                .setRequired(true)),
+                .setRequired(true))
+        .setDMPermission(true), // Habilitar em DMs
     
     new SlashCommandBuilder()
         .setName('ping')
         .setDescription('Verifica a latência do bot')
+        .setDMPermission(true) // Habilitar em DMs
 ];
 
 // Registrar comandos slash
 const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
 
-// Registrar comandos slash
+// Registrar comandos slash com suporte a DMs
 async function registerCommands() {
     try {
         console.log('🔧 Registrando comandos slash...');
@@ -276,13 +280,26 @@ async function registerCommands() {
         const commandsData = commands.map(command => command.toJSON());
         
         // Registrar comandos globalmente (leva até 1 hora para propagar)
-        await rest.put(
+        const data = await rest.put(
             Routes.applicationCommands(CLIENT_ID),
             { body: commandsData }
         );
         
         console.log('✅ Comandos slash registrados com sucesso!');
-        console.log('⏰ Os comandos podem levar até 1 hora para aparecerem em todos os servidores');
+        console.log(`📋 ${data.length} comandos registrados:`);
+        data.forEach(cmd => {
+            console.log(`   - /${cmd.name}: ${cmd.description} (DM: ${cmd.dm_permission || false})`);
+        });
+        
+        // Para desenvolvimento, também registrar em um servidor específico para teste rápido
+        if (process.env.TEST_GUILD_ID) {
+            console.log('🔧 Registrando comandos no servidor de teste...');
+            await rest.put(
+                Routes.applicationGuildCommands(CLIENT_ID, process.env.TEST_GUILD_ID),
+                { body: commandsData }
+            );
+            console.log('✅ Comandos registrados no servidor de teste!');
+        }
         
     } catch (error) {
         console.error('❌ Erro ao registrar comandos:', error);
@@ -292,6 +309,8 @@ async function registerCommands() {
             console.error('💡 Erro 50001: Missing Access - Verifique se o bot tem permissão para criar comandos');
         } else if (error.code === 50013) {
             console.error('💡 Erro 50013: Missing Permissions - Verifique as permissões do bot');
+        } else if (error.code === 40041) {
+            console.error('💡 Erro 40041: Application Commands Disabled - Habilite os comandos de aplicativo nas configurações do bot');
         }
     }
 }
