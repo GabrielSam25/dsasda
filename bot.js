@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Events, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -26,9 +26,10 @@ const discordClient = new Client({
 
 // TOKEN SEGURO - via variável de ambiente
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
 
-if (!DISCORD_BOT_TOKEN) {
-    console.error('❌ ERROR: DISCORD_BOT_TOKEN não encontrado nas variáveis de ambiente');
+if (!DISCORD_BOT_TOKEN || !CLIENT_ID) {
+    console.error('❌ ERROR: Variáveis de ambiente não encontradas');
     process.exit(1);
 }
 
@@ -122,23 +123,13 @@ async function getTrackingInfo(trackingCode) {
             statusEmoji = '📮';
         }
 
-        // Calcular progresso baseado no status
-        let progress = 0;
-        if (isDelivered(status)) progress = 100;
-        else if (statusLower.includes('saiu para entrega')) progress = 80;
-        else if (statusLower.includes('trânsito')) progress = 60;
-        else if (statusLower.includes('postado')) progress = 40;
-        else progress = 20;
-
         return {
             success: true,
             trackingCode,
             status: `${statusEmoji} ${status}`,
             statusEmoji,
-            progress,
             events,
             lastUpdated: new Date().toISOString(),
-            estimatedDelivery: calculateEstimatedDelivery(events),
             isDelivered: isDelivered(status),
             rawData: apiData
         };
@@ -153,19 +144,6 @@ async function getTrackingInfo(trackingCode) {
     }
 }
 
-// Função para calcular entrega estimada
-function calculateEstimatedDelivery(events) {
-    if (!events || events.length === 0) return null;
-    
-    const firstEvent = events[events.length - 1];
-    const firstDate = new Date(firstEvent.timestamp || new Date());
-    
-    const estimatedDate = new Date(firstDate);
-    estimatedDate.setDate(estimatedDate.getDate() + 10);
-    
-    return estimatedDate.toISOString();
-}
-
 // Função para criar embed do Discord
 function createTrackingEmbed(trackingInfo, isUpdate = false) {
     const embed = new EmbedBuilder()
@@ -174,17 +152,8 @@ function createTrackingEmbed(trackingInfo, isUpdate = false) {
         .setDescription(`Código de rastreamento: **${trackingInfo.trackingCode}**`)
         .addFields(
             { name: '📊 Status Atual', value: `${trackingInfo.status}`, inline: true },
-            { name: '📈 Progresso', value: `${trackingInfo.progress}%`, inline: true },
             { name: '🕒 Última Atualização', value: formatDateTime(trackingInfo.lastUpdated), inline: true }
         );
-    
-    if (trackingInfo.estimatedDelivery) {
-        embed.addFields({
-            name: '📅 Previsão de Entrega',
-            value: formatDateTime(trackingInfo.estimatedDelivery),
-            inline: true
-        });
-    }
     
     if (trackingInfo.events && trackingInfo.events.length > 0) {
         const recentEvents = trackingInfo.events.slice(0, 3);
@@ -269,9 +238,60 @@ async function checkForUpdates() {
     }
 }
 
+// Definir comandos slash
+const commands = [
+    new SlashCommandBuilder()
+        .setName('rastrear')
+        .setDescription('Rastreia um código de encomenda da Shopee')
+        .addStringOption(option =>
+            option.setName('codigo')
+                .setDescription('Código de rastreamento (ex: BR123456789BR)')
+                .setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('meusrastreamentos')
+        .setDescription('Lista todos os pedidos que você está rastreando'),
+    
+    new SlashCommandBuilder()
+        .setName('removerrastreamento')
+        .setDescription('Para de acompanhar um pedido')
+        .addStringOption(option =>
+            option.setName('codigo')
+                .setDescription('Código de rastreamento que deseja remover')
+                .setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('ping')
+        .setDescription('Verifica a latência do bot')
+];
+
+// Registrar comandos slash
+const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
+
+async function registerCommands() {
+    try {
+        console.log('🔧 Registrando comandos slash...');
+        await rest.put(
+            Routes.applicationCommands(CLIENT_ID),
+            { body: commands }
+        );
+        console.log('✅ Comandos slash registrados com sucesso!');
+    } catch (error) {
+        console.error('❌ Erro ao registrar comandos:', error);
+    }
+}
+
+// Função para validar código de rastreamento
+function isValidTrackingCode(code) {
+    return code && code.length >= 10 && code.length <= 20;
+}
+
 // Event listener for when the bot is ready
-discordClient.once(Events.ClientReady, (readyClient) => {
+discordClient.once(Events.ClientReady, async (readyClient) => {
     console.log(`🤖 Bot Discord logado como ${readyClient.user.tag}!`);
+    
+    // Registrar comandos slash
+    await registerCommands();
     
     // Iniciar servidor HTTP
     app.listen(PORT, () => {
@@ -285,11 +305,238 @@ discordClient.once(Events.ClientReady, (readyClient) => {
     setTimeout(checkForUpdates, 10000);
 });
 
-// Event listener for message events
-discordClient.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.content.startsWith('!rastrear')) return;
+// Handler de comandos slash
+discordClient.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isCommand()) return;
+
+    const { commandName, options, user } = interaction;
 
     try {
+        // Comando /rastrear
+        if (commandName === 'rastrear') {
+            await interaction.deferReply();
+            
+            const trackingCode = options.getString('codigo');
+            const userId = user.id;
+
+            // Validar formato do código de rastreamento
+            if (!isValidTrackingCode(trackingCode)) {
+                return interaction.editReply('❌ Código de rastreamento inválido. Formatos aceitos: BR123456789BR, LX123456789US, etc.');
+            }
+
+            // Verificar se já está registrado e é o mesmo usuário
+            if (trackingData[trackingCode] && trackingData[trackingCode].users.includes(userId)) {
+                return interaction.editReply('❌ Você já está registrado para receber atualizações deste código de rastreamento.');
+            }
+
+            try {
+                const trackingInfo = await getTrackingInfo(trackingCode);
+                
+                // Verificar se já foi entregue
+                if (trackingInfo.isDelivered) {
+                    const embed = createTrackingEmbed(trackingInfo);
+                    return interaction.editReply({ 
+                        content: `✅ Pedido **${trackingCode}** já foi entregue!`, 
+                        embeds: [embed] 
+                    });
+                }
+
+                // Registrar/atualizar dados
+                if (!trackingData[trackingCode]) {
+                    trackingData[trackingCode] = {
+                        users: [],
+                        lastStatus: trackingInfo.status,
+                        history: trackingInfo.events,
+                        isDelivered: trackingInfo.isDelivered,
+                        createdAt: new Date().toISOString()
+                    };
+                }
+
+                // Adicionar usuário se não estiver registrado
+                if (!trackingData[trackingCode].users.includes(userId)) {
+                    trackingData[trackingCode].users.push(userId);
+                    saveData();
+                }
+
+                const embed = createTrackingEmbed(trackingInfo);
+                
+                await interaction.editReply({ 
+                    content: `✅ Registrado para **${trackingCode}** - ${trackingInfo.status}\nVocê receberá atualizações automáticas!`, 
+                    embeds: [embed] 
+                });
+
+            } catch (error) {
+                console.error('Erro na API:', error);
+                await interaction.editReply('❌ Não foi possível obter informações de rastreamento. Verifique o código e tente novamente.');
+            }
+        }
+
+        // Comando /meusrastreamentos
+        else if (commandName === 'meusrastreamentos') {
+            await interaction.deferReply();
+            
+            const userId = user.id;
+            const userTrackings = [];
+            
+            for (const [trackingCode, data] of Object.entries(trackingData)) {
+                if (data.users.includes(userId)) {
+                    userTrackings.push({
+                        code: trackingCode,
+                        status: data.lastStatus,
+                        registered: data.createdAt
+                    });
+                }
+            }
+            
+            if (userTrackings.length === 0) {
+                return interaction.editReply('❌ Você não está rastreando nenhum pedido no momento.');
+            }
+            
+            const embed = new EmbedBuilder()
+                .setColor(0x0099FF)
+                .setTitle('📦 SEUS RASTREAMENTOS ATIVOS')
+                .setDescription(`Você está acompanhando ${userTrackings.length} pedido(s)`)
+                .addFields(
+                    userTrackings.map(tracking => ({
+                        name: `📦 ${tracking.code}`,
+                        value: `Status: ${tracking.status}\nRegistrado em: ${formatDateTime(tracking.registered)}`,
+                        inline: false
+                    }))
+                )
+                .setFooter({ text: 'Use /removerrastreamento para parar de acompanhar' });
+            
+            await interaction.editReply({ embeds: [embed] });
+        }
+
+        // Comando /removerrastreamento
+        else if (commandName === 'removerrastreamento') {
+            await interaction.deferReply();
+            
+            const trackingCode = options.getString('codigo');
+            const userId = user.id;
+            
+            if (!trackingData[trackingCode]) {
+                return interaction.editReply('❌ Código de rastreamento não encontrado.');
+            }
+            
+            if (!trackingData[trackingCode].users.includes(userId)) {
+                return interaction.editReply('❌ Você não está rastreando este pedido.');
+            }
+            
+            // Remover usuário da lista
+            trackingData[trackingCode].users = trackingData[trackingCode].users.filter(id => id !== userId);
+            
+            // Se não houver mais usuários, remover completamente
+            if (trackingData[trackingCode].users.length === 0) {
+                delete trackingData[trackingCode];
+            }
+            
+            saveData();
+            
+            await interaction.editReply(`✅ Você parou de acompanhar o pedido **${trackingCode}**.`);
+        }
+
+        // Comando /ping
+        else if (commandName === 'ping') {
+            await interaction.deferReply();
+            
+            const start = Date.now();
+            const end = Date.now();
+            
+            await interaction.editReply(`🏓 Pong! Latência: ${end - start}ms | Latência da API: ${Math.round(discordClient.ws.ping)}ms`);
+        }
+
+    } catch (error) {
+        console.error('Erro no comando slash:', error);
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply('❌ Ocorreu um erro ao processar sua solicitação.');
+        } else {
+            await interaction.reply('❌ Ocorreu um erro ao processar sua solicitação.');
+        }
+    }
+});
+
+// Event listener for message events (comandos de texto legado)
+discordClient.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    
+    // Comando !meusrastreamentos
+    if (message.content === '!meusrastreamentos') {
+        const userId = message.author.id;
+        const userTrackings = [];
+        
+        for (const [trackingCode, data] of Object.entries(trackingData)) {
+            if (data.users.includes(userId)) {
+                userTrackings.push({
+                    code: trackingCode,
+                    status: data.lastStatus,
+                    registered: data.createdAt
+                });
+            }
+        }
+        
+        if (userTrackings.length === 0) {
+            return message.reply('❌ Você não está rastreando nenhum pedido no momento.');
+        }
+        
+        const embed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('📦 SEUS RASTREAMENTOS ATIVOS')
+            .setDescription(`Você está acompanhando ${userTrackings.length} pedido(s)`)
+            .addFields(
+                userTrackings.map(tracking => ({
+                    name: `📦 ${tracking.code}`,
+                    value: `Status: ${tracking.status}\nRegistrado em: ${formatDateTime(tracking.registered)}`,
+                    inline: false
+                }))
+            )
+            .setFooter({ text: 'Use !removerrastreamento <código> para parar de acompanhar' });
+        
+        message.reply({ embeds: [embed] });
+    }
+    
+    // Comando !removerrastreamento
+    else if (message.content.startsWith('!removerrastreamento')) {
+        const args = message.content.split(' ');
+        if (args.length < 2) {
+            return message.reply('❌ Por favor, use: `!removerrastreamento <código_rastreamento>`');
+        }
+        
+        const trackingCode = args[1];
+        const userId = message.author.id;
+        
+        if (!trackingData[trackingCode]) {
+            return message.reply('❌ Código de rastreamento não encontrado.');
+        }
+        
+        if (!trackingData[trackingCode].users.includes(userId)) {
+            return message.reply('❌ Você não está rastreando este pedido.');
+        }
+        
+        // Remover usuário da lista
+        trackingData[trackingCode].users = trackingData[trackingCode].users.filter(id => id !== userId);
+        
+        // Se não houver mais usuários, remover completamente
+        if (trackingData[trackingCode].users.length === 0) {
+            delete trackingData[trackingCode];
+        }
+        
+        saveData();
+        
+        message.reply(`✅ Você parou de acompanhar o pedido **${trackingCode}**.`);
+    }
+    
+    // Comando !ping
+    else if (message.content === '!ping') {
+        const start = Date.now();
+        const pingMsg = await message.reply('🏓 Pong! Calculando...');
+        const end = Date.now();
+        
+        pingMsg.edit(`🏓 Pong! Latência: ${end - start}ms | Latência da API: ${Math.round(discordClient.ws.ping)}ms`);
+    }
+    
+    // Comando !rastrear (legado)
+    else if (message.content.startsWith('!rastrear')) {
         const args = message.content.split(' ');
         if (args.length < 2) {
             return message.reply('❌ Por favor, use: `!rastrear <código_rastreamento>`');
@@ -351,17 +598,8 @@ discordClient.on(Events.MessageCreate, async (message) => {
             console.error('Erro na API:', error);
             await processingMsg.edit('❌ Não foi possível obter informações de rastreamento. Verifique o código e tente novamente.');
         }
-
-    } catch (error) {
-        console.error('Erro no comando de rastreamento:', error);
-        message.reply('❌ Ocorreu um erro ao processar sua solicitação.');
     }
 });
-
-// Função para validar código de rastreamento
-function isValidTrackingCode(code) {
-    return code && code.length >= 10 && code.length <= 20;
-}
 
 // Rotas da API
 app.get('/health', (req, res) => {
@@ -381,7 +619,6 @@ app.get('/track/:code', async (req, res) => {
             success: trackingInfo.success,
             trackingCode: trackingInfo.trackingCode,
             status: trackingInfo.status,
-            progress: `${trackingInfo.progress}%`,
             isDelivered: trackingInfo.isDelivered,
             events: trackingInfo.events.map(event => ({
                 time: event.time,
@@ -407,6 +644,21 @@ app.get('/users', (req, res) => {
         totalTrackings: Object.keys(trackingData).length,
         data: trackingData
     });
+});
+
+// Nova rota: Ping
+app.get('/ping', (req, res) => {
+    const start = Date.now();
+    
+    setTimeout(() => {
+        const responseTime = Date.now() - start;
+        res.json({
+            status: 'online',
+            responseTime: `${responseTime}ms`,
+            timestamp: new Date().toISOString(),
+            trackingsCount: Object.keys(trackingData).length
+        });
+    }, 10);
 });
 
 // Log in to Discord with your bot's token
