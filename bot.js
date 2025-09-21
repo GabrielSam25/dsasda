@@ -1,3 +1,6 @@
+// bot.js - Linhas iniciais
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -23,8 +26,14 @@ const discordClient = new Client({
     ]
 });
 
-// TOKEN DO BOT DISCORD - COLE SEU TOKEN AQUI
-const DISCORD_BOT_TOKEN = 'MTQxNzUzNTMyNjM3Mjc2MTY0NA.G4g6uu.gy4aLfFjU7jaIjMm2w_sp-EFeWr-soh25VCatk';
+// TOKEN SEGURO - via variável de ambiente
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+
+if (!DISCORD_BOT_TOKEN) {
+    console.error('❌ ERROR: DISCORD_BOT_TOKEN não encontrado nas variáveis de ambiente');
+    process.exit(1);
+}
+
 
 // URL da sua API no Vercel
 const API_BASE_URL = 'https://recebasddsa.vercel.app/api/shopee-tracker';
