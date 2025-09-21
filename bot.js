@@ -24,7 +24,7 @@ const discordClient = new Client({
 });
 
 // TOKEN DO BOT DISCORD - COLE SEU TOKEN AQUI
-const DISCORD_BOT_TOKEN = 'MTQxNzUzNTMyNjM3Mjc2MTY0NA.Gq4DqM.bCwR_DcuBcdIXXu4J_oC28qIMBtRkODZEiP7wU';
+const DISCORD_BOT_TOKEN = 'MTQxNzUzNTMyNjM3Mjc2MTY0NA.G4g6uu.gy4aLfFjU7jaIjMm2w_sp-EFeWr-soh25VCatk';
 
 // URL da sua API no Vercel
 const API_BASE_URL = 'https://recebasddsa.vercel.app/api/shopee-tracker';
