@@ -1,30 +1,25 @@
 {
   "name": "shopee-tracker-bot",
   "version": "1.0.0",
-  "description": "Bot Discord para rastreamento de encomendas Shopee/SPX com API integrada",
+  "description": "Bot Discord para rastreamento de encomendas Shopee/SPX",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
     "dev": "node bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "discord",
-    "bot",
-    "tracking",
-    "shopee",
-    "spx",
-    "api"
-  ],
-  "author": "Seu Nome",
+  "keywords": ["discord", "bot", "tracking", "shopee", "api"],
+  "author": "GabrielSam25",
   "license": "MIT",
   "dependencies": {
-    "express": "*",
-    "cors": "*",
-    "axios": "*",
-    "cheerio": "*",
-    "discord.js": "*",
-    "fs": "*",
-    "path": "*"
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
