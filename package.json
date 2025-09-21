@@ -1,14 +1,30 @@
 {
-  "name": "playwright-vercel",
+  "name": "shopee-tracker-bot",
   "version": "1.0.0",
+  "description": "Bot Discord para rastreamento de encomendas Shopee/SPX com API integrada",
+  "main": "bot.js",
   "scripts": {
-    "start": "node api/test.js"
+    "start": "node bot.js",
+    "dev": "node bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [
+    "discord",
+    "bot",
+    "tracking",
+    "shopee",
+    "spx",
+    "api"
+  ],
+  "author": "Seu Nome",
+  "license": "MIT",
   "dependencies": {
-    "@sparticuz/chromium": "^116.0.0",
-    "playwright-core": "^1.38.0"
-  },
-  "engines": {
-    "node": "18.x"
+    "express": "*",
+    "cors": "*",
+    "axios": "*",
+    "cheerio": "*",
+    "discord.js": "*",
+    "fs": "*",
+    "path": "*"
   }
 }
